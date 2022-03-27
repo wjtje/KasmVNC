@@ -8,7 +8,11 @@ prepare_build_env() {
 }
 
 copy_spec_and_tar_with_binaries() {
-  cp /src/centos/kasmvncserver.spec ~/rpmbuild/SPECS/
+  if [ "${os}_${os_codename}" == "fedora_thirtyfive" ]; then
+    cp /src/fedora/kasmvncserver.spec ~/rpmbuild/SPECS/
+  else
+    cp /src/centos/kasmvncserver.spec ~/rpmbuild/SPECS/
+  fi
   cp /src/builder/build/kasmvnc.${os}_${os_codename}.tar.gz \
     ~/rpmbuild/SOURCES/
 }
