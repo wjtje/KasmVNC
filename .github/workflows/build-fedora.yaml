@@ -1,0 +1,20 @@
+name: Build fedora 35 package
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+      - run: mkdir builder/www
+      - run: sudo docker build -t kasmweb/www -f builder/dockerfile.www.build .
+      - run: sudo docker run --rm -v $PWD/builder/www:/build kasmweb/www:latest
+      - name: Build fedora 35 package
+        run: sudo builder/build-package fedora thirtyfive
+      - name: Archive production artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: package
+          path: |
+            builder/build/**/*.rpm
