@@ -367,17 +367,18 @@ char *percentEncode4(const uint16_t *str, const unsigned len) {
 }
 
 static void cliplog(const char *str, const int len, const int origlen,
-                    const char *dir, const char *client) {
+                    const char *dir, const char *client, const unsigned id) {
   if (Server::DLP_ClipLog[0] == 'o')
     return;
   if (Server::DLP_ClipLog[0] == 'i') {
-    vlog.info("DLP: client %s: %s %u (%u requested) clipboard bytes", client, dir, len, origlen);
+    vlog.info("DLP: client %s: %s %u (%u requested) clipboard bytes, id %u", client, dir,
+              len, origlen, id);
   } else {
     // URL-encode it
     char *enc = percentEncode(str, len);
 
-    vlog.info("DLP: client %s: %s %u (%u requested) clipboard bytes: '%s'",
-              client, dir, len, origlen, enc);
+    vlog.info("DLP: client %s: %s %u (%u requested) clipboard bytes, id %u: '%s'",
+              client, dir, len, origlen, id, enc);
     free(enc);
   }
 }
@@ -439,7 +440,8 @@ void VNCSConnectionST::clearBinaryClipboardData()
 
 void VNCSConnectionST::sendBinaryClipboardDataOrClose(const char* mime,
                                                       const unsigned char *data,
-                                                      const unsigned len)
+                                                      const unsigned len,
+                                                      const unsigned id)
 {
   try {
     if (!(accessRights & AccessCutText)) return;
@@ -450,10 +452,11 @@ void VNCSConnectionST::sendBinaryClipboardDataOrClose(const char* mime,
       return;
     }
 
-    cliplog((const char *) data, len, len, "sent", sock->getPeerAddress());
+    cliplog((const char *) data, len, len, "sent", sock->getPeerAddress(),
+            id);
     if (state() != RFBSTATE_NORMAL) return;
 
-    addBinaryClipboard(mime, data, len);
+    addBinaryClipboard(mime, data, len, id);
     binclipTimer.start(100);
   } catch(rdr::Exception& e) {
     close(e.str());
@@ -709,7 +712,7 @@ void VNCSConnectionST::setPixelFormat(const PixelFormat& pf)
   setCursor();
 }
 
-void VNCSConnectionST::pointerEvent(const Point& pos, int buttonMask, const bool skipClick, const bool skipRelease, int scrollX, int scrollY)
+void VNCSConnectionST::pointerEvent(const Point& pos, const Point& abspos, int buttonMask, const bool skipClick, const bool skipRelease, int scrollX, int scrollY)
 {
   pointerEventTime = lastEventTime = time(0);
   server->lastUserInputTime = lastEventTime;
@@ -722,7 +725,45 @@ void VNCSConnectionST::pointerEvent(const Point& pos, int buttonMask, const bool
   }
   if (!rfb::Server::acceptPointerEvents) return;
   if (!server->pointerClient || server->pointerClient == this) {
-    pointerEventPos = pos;
+    Point newpos = pos;
+    if (pos.x & 0x4000) {
+      newpos.x &= ~0x4000;
+      newpos.y &= ~0x4000;
+
+      if (newpos.x & 0x8000) {
+        newpos.x &= ~0x8000;
+        newpos.x = -newpos.x;
+      }
+      if (newpos.y & 0x8000) {
+        newpos.y &= ~0x8000;
+        newpos.y = -newpos.y;
+      }
+
+      if (newpos.x < 0) {
+        if (pointerEventPos.x + newpos.x >= 0)
+          pointerEventPos.x += newpos.x;
+        else
+          pointerEventPos.x = 0;
+      } else {
+        pointerEventPos.x += newpos.x;
+        if (pointerEventPos.x >= cp.width)
+          pointerEventPos.x = cp.width;
+      }
+
+      if (newpos.y < 0) {
+        if (pointerEventPos.y + newpos.y >= 0)
+          pointerEventPos.y += newpos.y;
+        else
+          pointerEventPos.y = 0;
+      } else {
+        pointerEventPos.y += newpos.y;
+        if (pointerEventPos.y >= cp.height)
+          pointerEventPos.y = cp.height;
+      }
+    } else {
+      pointerEventPos = pos;
+    }
+
     if (buttonMask)
       server->pointerClient = this;
     else
@@ -743,7 +784,7 @@ void VNCSConnectionST::pointerEvent(const Point& pos, int buttonMask, const bool
       }
     }
 
-    server->desktop->pointerEvent(pointerEventPos, buttonMask, skipclick, skiprelease, scrollX, scrollY);
+    server->desktop->pointerEvent(newpos, pointerEventPos, buttonMask, skipclick, skiprelease, scrollX, scrollY);
   }
 }
 
@@ -1049,6 +1090,14 @@ void VNCSConnectionST::handleClipboardAnnounceBinary(const unsigned num, const c
   if (!(accessRights & AccessCutText)) return;
   if (!rfb::Server::acceptCutText) return;
   server->handleClipboardAnnounceBinary(this, num, mimes);
+
+  const unsigned tolog = server->clipboardId++;
+
+  if (Server::DLP_ClipLog[0] == 'o')
+    return;
+  vlog.info("DLP: client %s: %s %u clipboard mimes, id %u",
+            sock->getPeerAddress(), "received",
+            num, tolog);
 }
 
 // supportsLocalCursor() is called whenever the status of

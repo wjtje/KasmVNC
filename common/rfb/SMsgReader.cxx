@@ -226,7 +226,8 @@ void SMsgReader::readPointerEvent()
   int y = is->readU16();
   int scrollX = is->readS16();
   int scrollY = is->readS16();
-  handler->pointerEvent(Point(x, y), mask, false, false, scrollX, scrollY);
+  
+  handler->pointerEvent(Point(x, y), Point(0, 0), mask, false, false, scrollX, scrollY);
 }
 
 
@@ -276,7 +277,7 @@ void SMsgReader::readBinaryClipboard()
 
     vlog.debug("Received binary clipboard, type %s, %u bytes", mime, len);
 
-    handler->addBinaryClipboard(mime, (rdr::U8 *) ca.buf, len);
+    handler->addBinaryClipboard(mime, (rdr::U8 *) ca.buf, len, 0);
     valid++;
   }
 

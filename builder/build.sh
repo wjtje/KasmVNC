@@ -56,6 +56,10 @@ autoreconf -i
 # everything after that is based on BUILDING.txt to remove unneeded
 # components.
 ensure_crashpad_can_fetch_line_number_by_address
+# remove gl check for opensuse
+if [ "${KASMVNC_BUILD_OS}" == "opensuse" ]; then
+  sed -i 's/LIBGL="gl >= 7.1.0"/LIBGL="gl >= 1.1"/g' configure
+fi
 ./configure --prefix=/opt/kasmweb \
 	--with-xkb-path=/usr/share/X11/xkb \
 	--with-xkb-output=/var/lib/xkb \
@@ -92,7 +96,9 @@ cd /src
 detect_quilt
 if [ -n "$QUILT_PRESENT" ]; then
   quilt push -a
+  echo 'Patches applied!'
 fi
+
 make servertarball
 
 cp kasmvnc*.tar.gz /build/kasmvnc.${KASMVNC_BUILD_OS}_${KASMVNC_BUILD_OS_CODENAME}.tar.gz

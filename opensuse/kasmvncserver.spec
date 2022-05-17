@@ -1,14 +1,14 @@
 Name:           kasmvncserver
 Version:        0.9.3~beta
-Release:        1%{?dist}
+Release:        leap15
 Summary:        VNC server accessible from a web browser
 
 License: GPLv2+
 URL: https://github.com/kasmtech/KasmVNC
 
 BuildRequires: rsync
-Requires: xorg-x11-xauth, xorg-x11-xkb-utils, xkeyboard-config, xorg-x11-server-utils, openssl, perl
-Conflicts: tigervnc-server, tigervnc-server-minimal
+Requires: xauth, libxkbcommon-x11-0, xkeyboard-config, x11-tools, openssl, perl, libpixman-1-0, libnettle6, libjpeg8, libgomp1, libgnutls30, libXfont2-2, libXdmcp6, libglvnd, xkbcomp
+Conflicts: tigervnc, tigervnc-x11vnc
 
 %description
 VNC stands for Virtual Network Computing. It is, in essence, a remote
@@ -36,8 +36,8 @@ Simplicity - KasmVNC aims at being simple to deploy and configure.
 %install
 rm -rf $RPM_BUILD_ROOT
 
-TARGET_OS=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
-TARGET_OS_CODENAME=$(lsb_release -cs | tr '[:upper:]' '[:lower:]')
+TARGET_OS=$KASMVNC_BUILD_OS
+TARGET_OS_CODENAME=$KASMVNC_BUILD_OS_CODENAME
 TARBALL=$RPM_SOURCE_DIR/kasmvnc.${TARGET_OS}_${TARGET_OS_CODENAME}.tar.gz
 TAR_DATA=$(mktemp -d)
 tar -xzf "$TARBALL" -C "$TAR_DATA"
