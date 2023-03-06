@@ -12,9 +12,15 @@ variables:
   # "BUILD_JOBS: none" won't build any build jobs, nor www.
   BUILD_JOBS: all
 
+workflow:
+  rules:
+    # Disable tag builds.
+    - if: $CI_COMMIT_TAG != $CI_COMMIT_REF_NAME
+
 stages:
   - www
   - build
+  - test
   - upload
 
 .prepare_build: &prepare_build
@@ -131,6 +137,42 @@ build_ubuntu_focal_arm:
     - *prepare_artfacts
   script:
     - bash builder/build-package ubuntu focal;
+  only:
+    variables:
+      - $BUILD_JOBS == 'all' || $BUILD_JOBS =~ $CI_JOB_NAME
+  artifacts:
+    paths:
+      - output/
+
+build_ubuntu_jammy:
+  stage: build
+  allow_failure: true
+  before_script:
+    - *prepare_build
+    - *prepare_www
+  after_script:
+    - *prepare_artfacts
+  script:
+    - bash builder/build-package ubuntu jammy;
+  only:
+    variables:
+      - $BUILD_JOBS == 'all' || $BUILD_JOBS =~ $CI_JOB_NAME
+  artifacts:
+    paths:
+      - output/
+
+build_ubuntu_jammy_arm:
+  stage: build
+  allow_failure: true
+  tags:
+    - arm
+  before_script:
+    - *prepare_build
+    - *prepare_www
+  after_script:
+    - *prepare_artfacts
+  script:
+    - bash builder/build-package ubuntu jammy;
   only:
     variables:
       - $BUILD_JOBS == 'all' || $BUILD_JOBS =~ $CI_JOB_NAME
@@ -334,6 +376,13 @@ build_opensuse_15_arm:
   artifacts:
     paths:
       - output/
+
+test:
+  stage: test
+  before_script:
+    - *prepare_build
+  script:
+    - bash builder/test-vncserver
 
 upload:
   stage: upload

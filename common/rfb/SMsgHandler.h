@@ -95,6 +95,9 @@ namespace rfb {
     // handler will send a pseudo-rect back, signalling server support.
     virtual void supportsQEMUKeyEvent();
 
+    virtual void udpUpgrade(const char *resp) = 0;
+    virtual void udpDowngrade(const bool) = 0;
+
     ConnParams cp;
   };
 }

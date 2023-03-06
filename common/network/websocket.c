@@ -41,10 +41,13 @@
  *
  *   Warning: not thread safe
  */
-int ssl_initialized = 0;
 int pipe_error = 0;
 settings_t settings;
 
+extern int wakeuppipe[2];
+
+extern char *extra_headers;
+extern unsigned extra_headers_len;
 
 void traffic(const char * token) {
     /*if ((settings.verbose) && (! settings.daemon)) {
@@ -249,6 +252,7 @@ void free_ws_ctx(ws_ctx_t *ctx) {
     free(ctx->cout_buf);
     free(ctx->tin_buf);
     free(ctx->tout_buf);
+    free(ctx->headers);
     free(ctx);
 }
 
@@ -269,15 +273,6 @@ ws_ctx_t *ws_socket_ssl(ws_ctx_t *ctx, int socket, const char * certfile, const 
     } else {
         // Combined key and cert file
         use_keyfile = certfile;
-    }
-
-    // Initialize the library
-    if (! ssl_initialized) {
-        SSL_library_init();
-        OpenSSL_add_all_algorithms();
-        SSL_load_error_strings();
-        ssl_initialized = 1;
-
     }
 
     ctx->ssl_ctx = SSL_CTX_new(SSLv23_server_method());
@@ -628,6 +623,8 @@ int decode_hybi(unsigned char *src, size_t srclength,
 int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
     char *start, *end;
     headers_t *headers = ws_ctx->headers;
+    const uint8_t extralogs = !!strstr(handshake, "/websockify");
+    #define err(x) if (extralogs) { wserr("/websockify request failed websocket checks, " x "\n"); }
 
     headers->key1[0] = '\0';
     headers->key2[0] = '\0';
@@ -635,16 +632,17 @@ int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
 
     if ((strlen(handshake) < 92) || (bcmp(handshake, "GET ", 4) != 0) ||
         (!strcasestr(handshake, "Upgrade: websocket"))) {
+        err("not a GET request, or missing Upgrade header");
         return 0;
     }
     start = handshake+4;
     end = strstr(start, " HTTP/1.1");
-    if (!end) { return 0; }
+    if (!end) { err("not HTTP"); return 0; }
     strncpy(headers->path, start, end-start);
     headers->path[end-start] = '\0';
 
     start = strstr(handshake, "\r\nHost: ");
-    if (!start) { return 0; }
+    if (!start) { err("missing Host header"); return 0; }
     start += 8;
     end = strstr(start, "\r\n");
     strncpy(headers->host, start, end-start);
@@ -656,7 +654,7 @@ int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
         start += 10;
     } else {
         start = strcasestr(handshake, "\r\nSec-WebSocket-Origin: ");
-        if (!start) { return 0; }
+        if (!start) { err("missing Sec-WebSocket-Origin header"); return 0; }
         start += 24;
     }
     end = strstr(start, "\r\n");
@@ -674,21 +672,21 @@ int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
         ws_ctx->hybi = strtol(headers->version, NULL, 10);
 
         start = strcasestr(handshake, "\r\nSec-WebSocket-Key: ");
-        if (!start) { return 0; }
+        if (!start) { err("missing Sec-WebSocket-Key header"); return 0; }
         start += 21;
         end = strstr(start, "\r\n");
         strncpy(headers->key1, start, end-start);
         headers->key1[end-start] = '\0';
 
         start = strstr(handshake, "\r\nConnection: ");
-        if (!start) { return 0; }
+        if (!start) { err("missing Connection header"); return 0; }
         start += 14;
         end = strstr(start, "\r\n");
         strncpy(headers->connection, start, end-start);
         headers->connection[end-start] = '\0';
 
         start = strcasestr(handshake, "\r\nSec-WebSocket-Protocol: ");
-        if (!start) { return 0; }
+        if (!start) { err("missing Sec-WebSocket-Protocol header"); return 0; }
         start += 26;
         end = strstr(start, "\r\n");
         strncpy(headers->protocols, start, end-start);
@@ -698,7 +696,7 @@ int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
         ws_ctx->hybi = 0;
 
         start = strstr(handshake, "\r\n\r\n");
-        if (!start) { return 0; }
+        if (!start) { err("headers too large"); return 0; }
         start += 4;
         if (strlen(start) == 8) {
             ws_ctx->hixie = 76;
@@ -706,14 +704,14 @@ int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
             headers->key3[8] = '\0';
 
             start = strcasestr(handshake, "\r\nSec-WebSocket-Key1: ");
-            if (!start) { return 0; }
+            if (!start) { err("missing Sec-WebSocket-Key1 header"); return 0; }
             start += 22;
             end = strstr(start, "\r\n");
             strncpy(headers->key1, start, end-start);
             headers->key1[end-start] = '\0';
 
             start = strcasestr(handshake, "\r\nSec-WebSocket-Key2: ");
-            if (!start) { return 0; }
+            if (!start) { err("missing Sec-WebSocket-Key2 header"); return 0; }
             start += 22;
             end = strstr(start, "\r\n");
             strncpy(headers->key2, start, end-start);
@@ -723,6 +721,8 @@ int parse_handshake(ws_ctx_t *ws_ctx, char *handshake) {
         }
 
     }
+
+    #undef err
 
     return 1;
 }
@@ -839,7 +839,8 @@ static void dirlisting(ws_ctx_t *ws_ctx, const char fullpath[], const char path[
                      "Location: %s/\r\n"
                      "Connection: close\r\n"
                      "Content-type: text/plain\r\n"
-                     "\r\n", path);
+                     "%s"
+                     "\r\n", path, extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         weblog(301, wsthread_handler_id, 0, origip, ip, user, 1, path, strlen(buf));
         return;
@@ -853,7 +854,9 @@ static void dirlisting(ws_ctx_t *ws_ctx, const char fullpath[], const char path[
                  "Server: KasmVNC/4.0\r\n"
                  "Connection: close\r\n"
                  "Content-type: text/html\r\n"
-                 "\r\n<html><title>Directory Listing</title><body><h2>%s</h2><hr><ul>", path);
+                 "%s"
+                 "\r\n<html><title>Directory Listing</title><body><h2>%s</h2><hr><ul>",
+                 extra_headers ? extra_headers : "", path);
     ws_send(ws_ctx, buf, strlen(buf));
     unsigned totallen = strlen(buf);
 
@@ -940,9 +943,11 @@ static void servefile(ws_ctx_t *ws_ctx, const char *in, const char * const user,
                  "Connection: close\r\n"
                  "Content-type: %s\r\n"
                  "Content-length: %lu\r\n"
+                 "%s"
                  "\r\n",
-                 name2mime(path), filesize);
-    ws_send(ws_ctx, buf, strlen(buf));
+                 name2mime(path), filesize, extra_headers ? extra_headers : "");
+    const unsigned hdrlen = strlen(buf);
+    ws_send(ws_ctx, buf, hdrlen);
 
     //fprintf(stderr, "http servefile output '%s'\n", buf);
 
@@ -952,7 +957,7 @@ static void servefile(ws_ctx_t *ws_ctx, const char *in, const char * const user,
     }
     fclose(f);
 
-    weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, path, strlen(buf) + filesize);
+    weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, path, hdrlen + filesize);
 
     return;
 nope:
@@ -960,8 +965,9 @@ nope:
                  "Server: KasmVNC/4.0\r\n"
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
+                 "%s"
                  "\r\n"
-                 "404");
+                 "404", extra_headers ? extra_headers : "");
     ws_send(ws_ctx, buf, strlen(buf));
     weblog(404, wsthread_handler_id, 0, origip, ip, user, 1, path, strlen(buf));
 }
@@ -1001,14 +1007,16 @@ notfound:
 }
 
 static void send403(ws_ctx_t *ws_ctx, const char * const origip, const char * const ip) {
-    const char response[] = "HTTP/1.1 403 Forbidden\r\n"
-                            "Server: KasmVNC/4.0\r\n"
-                            "Connection: close\r\n"
-                            "Content-type: text/plain\r\n"
-                            "\r\n"
-                            "403 Forbidden";
-    ws_send(ws_ctx, response, strlen(response));
-    weblog(403, wsthread_handler_id, 0, origip, ip, "-", 1, "-", strlen(response));
+    char buf[4096];
+    sprintf(buf, "HTTP/1.1 403 Forbidden\r\n"
+                 "Server: KasmVNC/4.0\r\n"
+                 "Connection: close\r\n"
+                 "Content-type: text/plain\r\n"
+                 "%s"
+                 "\r\n"
+                 "403 Forbidden", extra_headers ? extra_headers : "");
+    ws_send(ws_ctx, buf, strlen(buf));
+    weblog(403, wsthread_handler_id, 0, origip, ip, "-", 1, "-", strlen(buf));
 }
 
 static uint8_t ownerapi_post(ws_ctx_t *ws_ctx, const char *in, const char * const user,
@@ -1081,8 +1089,9 @@ static uint8_t ownerapi_post(ws_ctx_t *ws_ctx, const char *in, const char * cons
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: 6\r\n"
+                 "%s"
                  "\r\n"
-                 "200 OK");
+                 "200 OK", extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 0, path, strlen(buf));
 
@@ -1119,8 +1128,9 @@ static uint8_t ownerapi_post(ws_ctx_t *ws_ctx, const char *in, const char * cons
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: 6\r\n"
+                 "%s"
                  "\r\n"
-                 "200 OK");
+                 "200 OK", extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 0, path, strlen(buf));
 
@@ -1173,8 +1183,9 @@ static uint8_t ownerapi_post(ws_ctx_t *ws_ctx, const char *in, const char * cons
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: 6\r\n"
+                 "%s"
                  "\r\n"
-                 "200 OK");
+                 "200 OK", extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 0, path, strlen(buf));
 
@@ -1189,8 +1200,9 @@ nope:
                  "Server: KasmVNC/4.0\r\n"
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
+                 "%s"
                  "\r\n"
-                 "400 Bad Request");
+                 "400 Bad Request", extra_headers ? extra_headers : "");
     ws_send(ws_ctx, buf, strlen(buf));
     weblog(400, wsthread_handler_id, 0, origip, ip, user, 0, path, strlen(buf));
     return 1;
@@ -1275,7 +1287,8 @@ static uint8_t ownerapi(ws_ctx_t *ws_ctx, const char *in, const char * const use
                      "Connection: close\r\n"
                      "Content-type: text/plain\r\n"
                      "Content-length: %u\r\n"
-                     "\r\n", len);
+                     "%s"
+                     "\r\n", len, extra_headers ? extra_headers : "");
             ws_send(ws_ctx, buf, strlen(buf));
             ws_send(ws_ctx, staging, len);
             weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf) + len);
@@ -1288,7 +1301,8 @@ static uint8_t ownerapi(ws_ctx_t *ws_ctx, const char *in, const char * const use
                      "Connection: close\r\n"
                      "Content-type: image/jpeg\r\n"
                      "Content-length: %u\r\n"
-                     "\r\n", len);
+                     "%s"
+                     "\r\n", len, extra_headers ? extra_headers : "");
             ws_send(ws_ctx, buf, strlen(buf));
             ws_send(ws_ctx, staging, len);
             weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf) + len);
@@ -1358,8 +1372,9 @@ static uint8_t ownerapi(ws_ctx_t *ws_ctx, const char *in, const char * const use
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: 6\r\n"
+                 "%s"
                  "\r\n"
-                 "200 OK");
+                 "200 OK", extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf));
 
@@ -1387,8 +1402,9 @@ static uint8_t ownerapi(ws_ctx_t *ws_ctx, const char *in, const char * const use
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: 6\r\n"
+                 "%s"
                  "\r\n"
-                 "200 OK");
+                 "200 OK", extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf));
 
@@ -1442,8 +1458,9 @@ static uint8_t ownerapi(ws_ctx_t *ws_ctx, const char *in, const char * const use
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: 6\r\n"
+                 "%s"
                  "\r\n"
-                 "200 OK");
+                 "200 OK", extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf));
 
@@ -1457,7 +1474,8 @@ static uint8_t ownerapi(ws_ctx_t *ws_ctx, const char *in, const char * const use
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: %lu\r\n"
-                 "\r\n", strlen(statbuf));
+                 "%s"
+                 "\r\n", strlen(statbuf), extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         ws_send(ws_ctx, statbuf, strlen(statbuf));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf) + strlen(statbuf));
@@ -1473,7 +1491,8 @@ static uint8_t ownerapi(ws_ctx_t *ws_ctx, const char *in, const char * const use
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: %lu\r\n"
-                 "\r\n", strlen(ptr));
+                 "%s"
+                 "\r\n", strlen(ptr), extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         ws_send(ws_ctx, ptr, strlen(ptr));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf) + strlen(ptr));
@@ -1555,12 +1574,28 @@ static uint8_t ownerapi(ws_ctx_t *ws_ctx, const char *in, const char * const use
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
                  "Content-length: %lu\r\n"
-                 "\r\n", strlen(statbuf));
+                 "%s"
+                 "\r\n", strlen(statbuf), extra_headers ? extra_headers : "");
         ws_send(ws_ctx, buf, strlen(buf));
         ws_send(ws_ctx, statbuf, strlen(statbuf));
         weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf) + strlen(statbuf));
 
         handler_msg("Sent frame stats to API caller\n");
+        ret = 1;
+    } else entry("/api/send_full_frame") {
+        write(wakeuppipe[1], "", 1);
+
+        sprintf(buf, "HTTP/1.1 200 OK\r\n"
+                 "Server: KasmVNC/4.0\r\n"
+                 "Connection: close\r\n"
+                 "Content-type: text/plain\r\n"
+                 "Content-length: 6\r\n"
+                 "%s"
+                 "\r\n"
+                 "200 OK", extra_headers ? extra_headers : "");
+        ws_send(ws_ctx, buf, strlen(buf));
+        weblog(200, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf));
+
         ret = 1;
     }
 
@@ -1573,8 +1608,9 @@ nope:
                  "Server: KasmVNC/4.0\r\n"
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
+                 "%s"
                  "\r\n"
-                 "400 Bad Request");
+                 "400 Bad Request", extra_headers ? extra_headers : "");
     ws_send(ws_ctx, buf, strlen(buf));
     weblog(400, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf));
     return 1;
@@ -1584,8 +1620,9 @@ timeout:
                  "Server: KasmVNC/4.0\r\n"
                  "Connection: close\r\n"
                  "Content-type: text/plain\r\n"
+                 "%s"
                  "\r\n"
-                 "503 Service Unavailable");
+                 "503 Service Unavailable", extra_headers ? extra_headers : "");
     ws_send(ws_ctx, buf, strlen(buf));
     weblog(503, wsthread_handler_id, 0, origip, ip, user, 1, origpath, strlen(buf));
     return 1;
@@ -1711,7 +1748,8 @@ ws_ctx_t *do_handshake(int sock, char * const ip) {
             wserr("Authentication attempt failed, BasicAuth required, but client didn't send any\n");
             sprintf(response, "HTTP/1.1 401 Unauthorized\r\n"
                               "WWW-Authenticate: Basic realm=\"Websockify\"\r\n"
-                              "\r\n");
+                              "%s"
+                              "\r\n", extra_headers ? extra_headers : "");
             ws_send(ws_ctx, response, strlen(response));
             weblog(401, wsthread_handler_id, 0, origip, ip, "-", 1, url, strlen(response));
             free_ws_ctx(ws_ctx);
@@ -1793,7 +1831,8 @@ ws_ctx_t *do_handshake(int sock, char * const ip) {
             wserr("Authentication attempt failed, wrong password for user %s\n", inuser);
             bl_addFailure(ip);
             sprintf(response, "HTTP/1.1 401 Forbidden\r\n"
-                              "\r\n");
+                              "%s"
+                              "\r\n", extra_headers ? extra_headers : "");
             ws_send(ws_ctx, response, strlen(response));
             weblog(401, wsthread_handler_id, 0, origip, ip, inuser, 1, url, strlen(response));
             free_ws_ctx(ws_ctx);
@@ -1817,8 +1856,9 @@ ws_ctx_t *do_handshake(int sock, char * const ip) {
                         "Server: KasmVNC/4.0\r\n"
                         "Connection: close\r\n"
                         "Content-type: text/plain\r\n"
+                        "%s"
                         "\r\n"
-                        "401 Unauthorized");
+                        "401 Unauthorized", extra_headers ? extra_headers : "");
                 ws_send(ws_ctx, response, strlen(response));
                 weblog(401, wsthread_handler_id, 0, origip, ip, inuser, 1, url, strlen(response));
                 goto done;
@@ -1942,7 +1982,14 @@ void *start_server(void *unused) {
         pthread_t tid;
         pass->id = settings.handler_id;
         pass->csock = csock;
-        pthread_create(&tid, NULL, subthread, pass);
+
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+        pthread_create(&tid, &attr, subthread, pass);
+
+        pthread_attr_destroy(&attr);
 
         settings.handler_id += 1;
     }

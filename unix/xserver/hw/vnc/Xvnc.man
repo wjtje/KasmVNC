@@ -1,9 +1,9 @@
 .TH Xvnc 1 "" "KasmVNC" "Virtual Network Computing"
 .SH NAME
-Xvnc \- the X VNC server 
+Xvnc \- the X VNC server
 .SH SYNOPSIS
 .B Xvnc
-.RI [ options ] 
+.RI [ options ]
 .RI : display#
 .SH DESCRIPTION
 .B Xvnc
@@ -50,7 +50,7 @@ depth 16 is RGB565 and for depth 24 and 32 is RGB888.
 Listen on interface. By default Xvnc listens on all available interfaces.
 .
 .TP
-.B \-inetd 
+.B \-inetd
 This significantly changes Xvnc's behaviour so that it can be launched from
 inetd.  See the section below on usage with inetd.
 .
@@ -110,6 +110,11 @@ Run a mini-HTTP server which serves files from the given directory.  Normally
 the directory will contain the kasmweb client. It will use the websocket port.
 .
 .TP
+.B \-http-header \fIheader=val\fP
+Append this header to all HTTP responses (file and API). May be given multiple
+times.
+.
+.TP
 .B \-rfbauth \fIpasswd-file\fP, \-PasswordFile \fIpasswd-file\fP
 Password file for VNC authentication.  There is no default, you should
 specify the password file explicitly.  Password file should be created with
@@ -122,13 +127,27 @@ Password file for BasicAuth, created with the \fBkasmvncpasswd\fP utility.
 Default \fI~/.kasmpasswd\fP.
 .
 .TP
-.B \-AcceptCutText
-Accept clipboard updates from clients. Default is on.
+.B \-PublicIP \fImy-ip\fP
+The server's public IP, for UDP negotiation. If not set, will be queried via the internet.
+Default unset.
 .
 .TP
-.B \-MaxCutText \fIbytes\fP
-The maximum size of a clipboard update that will be accepted from a client.
-Default is \fB262144\fP.
+.B \-StunServer \fIsrv\fP
+Use this STUN server for querying the server's public IP. If not set, a hardcoded list of
+STUN servers is used.
+Default unset.
+.
+.TP
+.B \-udpFullFrameFrequency \fIframes\fP
+Send a full frame every N frames for clients using UDP. 0 to disable. Default \fI0\fP.
+.
+.TP
+.B \-udpPort \fIport\fP
+Which port to use for UDP. Default same as websocket.
+.
+.TP
+.B \-AcceptCutText
+Accept clipboard updates from clients. Default is on.
 .
 .TP
 .B \-SendCutText
@@ -548,10 +567,13 @@ created automatically the next time he connects.
 http://kasmweb.com
 
 .SH AUTHOR
-Tristan Richardson, RealVNC Ltd. and others.
+Kasm Technologies Corp., Tristan Richardson, RealVNC Ltd., D. R. Commander and others.
 
 VNC was originally developed by the RealVNC team while at Olivetti
 Research Ltd / AT&T Laboratories Cambridge.  TightVNC additions were
 implemented by Constantin Kaplinsky. Many other people have since
-participated in development, testing and support. This manual is part
-of the KasmVNC software suite.
+participated in development, testing and support. KasmVNC has since
+forked and the project and has added many modern features and made
+the solution web native.
+
+This manual is part of the KasmVNC software suite.

@@ -1,4 +1,6 @@
-#!/bin/sh -e
+#!/bin/bash
+
+set -e
 
 detect_quilt() {
   if which quilt 1>/dev/null; then
@@ -13,17 +15,39 @@ ensure_crashpad_can_fetch_line_number_by_address() {
   fi
 }
 
+
+fail_on_gcc_12() {
+  if [[ -n "$CC" && -n "$CXX" ]]; then
+    return;
+  fi
+
+  if gcc --version | head -1 | grep -q 12; then
+    cat >&2 <<EOF
+
+Error: gcc 12 detected. It has a bug causing the build to fall because of a
+-Warray-bounds bug. Please use gcc 11 in the build Dockerfile:
+ENV CC=gcc-11
+ENV CXX=g++-11
+RUN <install gcc 11>
+EOF
+  exit 1
+  fi
+}
+
 # For build-dep to work, the apt sources need to have the source server
 #sudo apt-get build-dep xorg-server
 
 #sudo apt-get install cmake git libjpeg-dev libgnutls-dev
+
+# Gcc12 builds fail due to bug
+fail_on_gcc_12
 
 # Ubuntu applies a million patches, but here we use upstream to simplify matters
 cd /tmp
 # default to the version of x in Ubuntu 18.04, otherwise caller will need to specify
 XORG_VER=${XORG_VER:-"1.19.6"}
 XORG_PATCH=$(echo "$XORG_VER" | grep -Po '^\d.\d+' | sed 's#\.##')
-wget https://www.x.org/archive/individual/xserver/xorg-server-${XORG_VER}.tar.bz2
+wget --no-check-certificate https://www.x.org/archive/individual/xserver/xorg-server-${XORG_VER}.tar.bz2
 
 #git clone https://kasmweb@bitbucket.org/kasmtech/kasmvnc.git
 #cd kasmvnc
@@ -36,7 +60,8 @@ sed -i -e '/find_package(FLTK/s@^@#@' \
 	-e '/add_subdirectory(tests/s@^@#@' \
 	CMakeLists.txt
 
-cmake -D CMAKE_BUILD_TYPE=RelWithDebInfo . -DBUILD_VIEWER:BOOL=OFF
+cmake -D CMAKE_BUILD_TYPE=RelWithDebInfo . -DBUILD_VIEWER:BOOL=OFF \
+  -DENABLE_GNUTLS:BOOL=OFF
 make -j5
 
 tar -C unix/xserver -xf /tmp/xorg-server-${XORG_VER}.tar.bz2 --strip-components=1
@@ -45,9 +70,13 @@ cd unix/xserver
 patch -Np1 -i ../xserver${XORG_PATCH}.patch
 case "$XORG_VER" in
   1.20.*)
+      patch -s -p0 < ../CVE-2022-2320-v1.20.patch
       if [ -f ../xserver120.7.patch ]; then
         patch -Np1 -i ../xserver120.7.patch
       fi ;;
+  1.19.*)
+      patch -s -p0 < ../CVE-2022-2320-v1.19.patch
+      ;;
 esac
 
 autoreconf -i
@@ -65,6 +94,7 @@ fi
 	--with-xkb-output=/var/lib/xkb \
 	--with-xkb-bin-directory=/usr/bin \
 	--with-default-font-path="/usr/share/fonts/X11/misc,/usr/share/fonts/X11/cyrillic,/usr/share/fonts/X11/100dpi/:unscaled,/usr/share/fonts/X11/75dpi/:unscaled,/usr/share/fonts/X11/Type1,/usr/share/fonts/X11/100dpi,/usr/share/fonts/X11/75dpi,built-ins" \
+  --with-sha1=libcrypto \
 	--without-dtrace --disable-dri \
         --disable-static \
 	--disable-xinerama --disable-xvfb --disable-xnest --disable-xorg \

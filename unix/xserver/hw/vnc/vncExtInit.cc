@@ -17,8 +17,10 @@
  * USA.
  */
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <errno.h>
 
 #include <set>
@@ -35,6 +37,7 @@
 #include <rfb/Hostname.h>
 #include <rfb/Region.h>
 #include <rfb/ledStates.h>
+#include <network/iceip.h>
 #include <network/TcpSocket.h>
 #include <network/UnixSocket.h>
 
@@ -49,6 +52,8 @@
 
 extern "C" {
 void vncSetGlueContext(int screenIndex);
+
+int wakeuppipe[2];
 }
 
 using namespace rfb;
@@ -199,8 +204,10 @@ void vncExtensionInit(void)
 
   vncAddExtension();
 
-  if (!initialised)
+  if (!initialised) {
     parseClipTypes();
+    getPublicIP();
+  }
   vncSelectionInit();
 
   vlog.info("VNC extension running!");
@@ -224,6 +231,11 @@ void vncExtensionInit(void)
           dummyX < 16 ||
           dummyY < 16)
           vncFatalError("Invalid value to %s", Server::maxVideoResolution.getName());
+
+      pipe(wakeuppipe);
+      const int flags = fcntl(wakeuppipe[0], F_GETFL, 0);
+      fcntl(wakeuppipe[0], F_SETFL, flags | O_NONBLOCK);
+      vncSetNotifyFd(wakeuppipe[0], 0, true, false);
 
       initialised = true;
     }

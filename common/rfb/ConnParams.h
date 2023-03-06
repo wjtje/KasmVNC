@@ -111,11 +111,14 @@ namespace rfb {
     bool supportsLEDState;
     bool supportsQEMUKeyEvent;
     bool supportsWEBP;
+    bool supportsQOI;
 
     bool supportsSetDesktopSize;
     bool supportsFence;
     bool supportsContinuousUpdates;
     bool supportsExtendedClipboard;
+
+    bool supportsUdp;
 
     int compressLevel;
     int qualityLevel;

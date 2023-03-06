@@ -196,6 +196,10 @@ namespace rfb {
       return encodeManager.getScalingTime();
     }
 
+    virtual void udpDowngrade(const bool byServer);
+
+    bool upgradingToUdp;
+
   private:
     // SConnection callbacks
 
@@ -217,6 +221,7 @@ namespace rfb {
                                          int x, int y, int w, int h);
     virtual void handleClipboardAnnounce(bool available);
     virtual void handleClipboardAnnounceBinary(const unsigned num, const char mimes[][32]);
+    virtual void udpUpgrade(const char *resp);
     virtual void supportsLocalCursor();
     virtual void supportsFence();
     virtual void supportsContinuousUpdates();
@@ -318,6 +323,7 @@ namespace rfb {
     std::vector<CopyPassRect> copypassed;
 
     bool frameTracking;
+    uint32_t udpFramesSinceFull;
   };
 }
 #endif

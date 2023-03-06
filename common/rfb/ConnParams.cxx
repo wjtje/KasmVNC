@@ -42,9 +42,10 @@ ConnParams::ConnParams()
     supportsDesktopResize(false), supportsExtendedDesktopSize(false),
     supportsDesktopRename(false), supportsLastRect(false),
     supportsLEDState(false), supportsQEMUKeyEvent(false),
-    supportsWEBP(false),
+    supportsWEBP(false), supportsQOI(false),
     supportsSetDesktopSize(false), supportsFence(false),
     supportsContinuousUpdates(false), supportsExtendedClipboard(false),
+    supportsUdp(false),
     compressLevel(2), qualityLevel(-1), fineQualityLevel(-1),
     subsampling(subsampleUndefined), name_(0), cursorPos_(0, 0), verStrPos(0),
     ledState_(ledUnknown), shandler(NULL)
@@ -131,6 +132,7 @@ void ConnParams::setEncodings(int nEncodings, const rdr::S32* encodings)
   supportsLastRect = false;
   supportsQEMUKeyEvent = false;
   supportsWEBP = false;
+  supportsQOI = false;
   compressLevel = -1;
   qualityLevel = -1;
   fineQualityLevel = -1;
@@ -182,6 +184,9 @@ void ConnParams::setEncodings(int nEncodings, const rdr::S32* encodings)
     case pseudoEncodingWEBP:
       supportsWEBP = true;
       break;
+    case pseudoEncodingQOI:
+      supportsQOI = true;
+      break;
     case pseudoEncodingFence:
       supportsFence = true;
       break;
@@ -211,7 +216,7 @@ void ConnParams::setEncodings(int nEncodings, const rdr::S32* encodings)
       break;
     case pseudoEncodingPreferBandwidth:
       if (!rfb::Server::ignoreClientSettingsKasm && canChangeSettings)
-        Server::preferBandwidth.setParam();
+        Server::preferBandwidth.setParam(true);
       break;
     case pseudoEncodingMaxVideoResolution:
       if (!rfb::Server::ignoreClientSettingsKasm && canChangeSettings)
@@ -276,6 +281,10 @@ void ConnParams::setEncodings(int nEncodings, const rdr::S32* encodings)
     if (encodings[i] > 0)
       encodings_.insert(encodings[i]);
   }
+
+  // QOI-specific overrides
+  if (supportsQOI)
+    useCopyRect = false;
 }
 
 void ConnParams::setLEDState(unsigned int state)
